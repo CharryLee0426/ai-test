@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "computer-control-mcp"
+version = "1.0.0"
+description = "MCP server: desktop control via PyAutoGUI (parity with computer-use-mcp)"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.0",
+  "pyautogui>=0.9.54",
+  "Pillow>=10.0",
+]
+
+[project.scripts]
+computer-control-mcp = "computer_control_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+  "-vv",
+  "-ra",
+  "--tb=long",
+  "--color=yes",
+  "--durations=10",
+]
+filterwarnings = [
+  "default",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)-8s [%(name)s] %(message)s"
+log_cli_date_format = "%H:%M:%S"
