@@ -20,7 +20,7 @@ async def test_list_tools_registers_computer() -> None:
     server = build_server()
     r = await server.request_handlers[ListToolsRequest](None)
     tools = r.root.tools
-    assert len(tools) == 1
+    assert len(tools) == 2
     t0 = tools[0]
     assert t0.name == "computer"
     assert t0.annotations is not None
@@ -28,6 +28,12 @@ async def test_list_tools_registers_computer() -> None:
     assert t0.annotations.readOnlyHint is False
     assert t0.inputSchema["properties"]["action"]["enum"] == ACTIONS
     assert t0.inputSchema.get("additionalProperties") is False
+    t1 = tools[1]
+    assert t1.name == "save_screenshot"
+    assert t1.annotations is not None
+    assert t1.annotations.title == "Save Screenshot"
+    assert t1.inputSchema.get("additionalProperties") is False
+    assert "path" in t1.inputSchema["properties"]
 
 
 @pytest.mark.asyncio
@@ -69,6 +75,30 @@ async def test_call_tool_json_result() -> None:
     assert not r.root.isError
     assert r.root.structuredContent == {"ok": True}
     assert '"ok": true' in r.root.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_call_tool_save_screenshot_result() -> None:
+    server = build_server()
+    await server.request_handlers[ListToolsRequest](None)
+    with patch(
+        "computer_control_mcp.server.handle_save_screenshot_sync",
+        return_value={
+            "kind": "json",
+            "data": {"ok": True, "path": "/tmp/screenshot-2026-04-07-13-06-05.png", "filename": "screenshot-2026-04-07-13-06-05.png"},
+        },
+    ):
+        req = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(name="save_screenshot", arguments={}),
+        )
+        r = await server.request_handlers[CallToolRequest](req)
+    assert not r.root.isError
+    assert r.root.structuredContent == {
+        "ok": True,
+        "path": "/tmp/screenshot-2026-04-07-13-06-05.png",
+        "filename": "screenshot-2026-04-07-13-06-05.png",
+    }
 
 
 @pytest.mark.asyncio

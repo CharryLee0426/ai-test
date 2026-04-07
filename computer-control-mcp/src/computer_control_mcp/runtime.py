@@ -9,12 +9,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pyautogui
 from PIL import Image, ImageDraw
 
 from computer_control_mcp.keymap import InvalidKeyError, to_pyautogui_keys
+
+_DEFAULT_SCREENSHOT_DIR = Path(__file__).resolve().parent / "screenshots"
 
 # Match computer-use-mcp nut-js delays (mouse ~100ms); PyAutoGUI uses one global pause.
 pyautogui.PAUSE = 0.1
@@ -249,3 +253,30 @@ def handle_computer_sync(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"kind": "screenshot", "meta": meta, "png_bytes": png_bytes}
 
     raise ValueError(f"Unknown action: {action}")
+
+
+def handle_save_screenshot_sync(arguments: dict[str, Any]) -> dict[str, Any]:
+    """
+    Capture a full-resolution screenshot (with crosshair) and write PNG to disk.
+
+    Returns {"kind": "json", "data": {"ok": True, "path": str, "filename": str}}.
+    """
+    raw_path = arguments.get("path")
+    if raw_path is not None and not isinstance(raw_path, str):
+        raise ValueError("path must be a string when provided")
+    dest_dir = Path(raw_path).expanduser().resolve() if raw_path else _DEFAULT_SCREENSHOT_DIR
+    if dest_dir.exists() and not dest_dir.is_dir():
+        raise ValueError(f"path must be a directory: {dest_dir}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    time.sleep(1.0)
+    cpx, cpy = pyautogui.position()
+    image = _grab_screen_pil()
+    _draw_crosshair(image, int(cpx), int(cpy))
+
+    ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    filename = f"screenshot-{ts}.png"
+    out_path = dest_dir / filename
+    image.save(out_path, format="PNG", optimize=True, compress_level=9)
+
+    return {"kind": "json", "data": {"ok": True, "path": str(out_path), "filename": filename}}

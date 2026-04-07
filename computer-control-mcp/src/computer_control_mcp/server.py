@@ -1,4 +1,4 @@
-"""MCP stdio server: registers the `computer` tool (computer-use-mcp parity)."""
+"""MCP stdio server: registers `computer` and `save_screenshot` tools."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
 from computer_control_mcp.keymap import InvalidKeyError
-from computer_control_mcp.runtime import handle_computer_sync
+from computer_control_mcp.runtime import handle_computer_sync, handle_save_screenshot_sync
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,24 @@ COMPUTER_INPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+SAVE_SCREENSHOT_DESCRIPTION = """Save a full-resolution screenshot of the screen to disk as a PNG file.
+The file name is always screenshot-YYYY-MM-DD-HH-MM-SS.png (local time)."""
+
+SAVE_SCREENSHOT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {
+            "type": "string",
+            "description": (
+                "Directory where the PNG will be written. "
+                "If omitted, the file is saved under src/computer_control_mcp/screenshots "
+                "(package screenshots folder)."
+            ),
+        },
+    },
+    "additionalProperties": False,
+}
+
 
 def _json_result(data: dict[str, Any]) -> types.CallToolResult:
     return types.CallToolResult(
@@ -98,17 +116,36 @@ def build_server() -> Server:
                 description=TOOL_DESCRIPTION,
                 inputSchema=COMPUTER_INPUT_SCHEMA,
                 annotations=types.ToolAnnotations(title="Computer Control", readOnlyHint=False),
-            )
+            ),
+            types.Tool(
+                name="save_screenshot",
+                description=SAVE_SCREENSHOT_DESCRIPTION,
+                inputSchema=SAVE_SCREENSHOT_INPUT_SCHEMA,
+                annotations=types.ToolAnnotations(title="Save Screenshot", readOnlyHint=False),
+            ),
         ]
 
     @server.call_tool()
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
+        args = arguments or {}
+        if name == "save_screenshot":
+            try:
+                raw = await asyncio.to_thread(handle_save_screenshot_sync, args)
+            except Exception as e:
+                logger.exception("save_screenshot tool failed")
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=str(e))],
+                    isError=True,
+                )
+            if raw["kind"] == "json":
+                return _json_result(raw["data"])
+            raise RuntimeError(f"Unexpected save_screenshot result: {raw!r}")
+
         if name != "computer":
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"Unknown tool: {name}")],
                 isError=True,
             )
-        args = arguments or {}
         try:
             raw = await asyncio.to_thread(handle_computer_sync, args)
         except InvalidKeyError as e:
