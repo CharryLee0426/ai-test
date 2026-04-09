@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
+import computer_control_mcp.runtime as runtime_mod
 from computer_control_mcp.runtime import (
     _draw_crosshair,
     _grab_screen_pil,
@@ -29,7 +30,12 @@ def test_get_size_to_api_scale_long_edge_over_limit() -> None:
 
 def test_get_api_to_logical_scale() -> None:
     with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(800, 600)):
-        scale = get_api_to_logical_scale()
+        with patch(
+            "computer_control_mcp.runtime._grab_screen_pil",
+            return_value=Image.new("RGBA", (800, 600)),
+        ):
+            runtime_mod._screen_mapping = None
+            scale = get_api_to_logical_scale()
     assert scale == 1.0
 
 
@@ -48,13 +54,36 @@ def test_pixels_to_scroll_clicks(amount: int, expected: int) -> None:
 
 def test_scale_coordinate_inside_bounds() -> None:
     with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(100, 100)):
-        assert _scale_coordinate([50.0, 49.6]) == (50, 50)
+        with patch(
+            "computer_control_mcp.runtime._grab_screen_pil",
+            return_value=Image.new("RGBA", (100, 100)),
+        ):
+            runtime_mod._screen_mapping = None
+            assert _scale_coordinate([50.0, 49.6]) == (50, 50)
+
+
+def test_scale_coordinate_maps_capture_to_logical_pixels() -> None:
+    """HiDPI: bitmap may be 2x logical size; API coords are in bitmap space, clicks use logical."""
+    with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(400, 300)):
+        with patch(
+            "computer_control_mcp.runtime._grab_screen_pil",
+            return_value=Image.new("RGBA", (800, 600)),
+        ):
+            runtime_mod._screen_mapping = None
+            assert _scale_coordinate([0.0, 0.0]) == (0, 0)
+            assert _scale_coordinate([200.0, 150.0]) == (100, 75)
+            assert _scale_coordinate([798.0, 598.0]) == (399, 299)
 
 
 def test_scale_coordinate_outside_bounds() -> None:
     with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(100, 100)):
-        with pytest.raises(ValueError, match="outside display bounds"):
-            _scale_coordinate([150, 50])
+        with patch(
+            "computer_control_mcp.runtime._grab_screen_pil",
+            return_value=Image.new("RGBA", (100, 100)),
+        ):
+            runtime_mod._screen_mapping = None
+            with pytest.raises(ValueError, match="outside display bounds"):
+                _scale_coordinate([150, 50])
 
 
 def test_draw_crosshair_sets_red_pixel() -> None:

@@ -31,6 +31,16 @@ MAX_PIXELS = 1.15 * 1024 * 1024
 
 _xdotool_available: bool | None = None
 
+# (move_w, move_h, api_w, api_h, capture_w, capture_h) — move_* match pyautogui.moveTo / size();
+# api_* are the downsampled screenshot sent to the model; capture_* are raw bitmap size before resize.
+# On macOS, screencapture / Pillow return backing-store pixels (often 2× logical), while
+# CGDisplayBounds + CGEventGetLocation share one logical/global space — map with proportional scale
+# (see _darwin_pointer_bitmap_xy_quartz).
+_screen_mapping: tuple[int, int, int, int, int, int] | None = None
+
+# Set True for the whole pytest session (conftest) so unit tests keep using pyautogui ratio mapping.
+_pytest_active: bool = False
+
 
 def _has_xdotool() -> bool:
     global _xdotool_available
@@ -57,9 +67,142 @@ def get_size_to_api_scale(width: float, height: float) -> float:
     return min(long_edge_scale, pixel_scale)
 
 
+def _api_output_dimensions(capture_width: int, capture_height: int) -> tuple[int, int]:
+    """Size of the downsampled image sent to the model (same rules as get_screenshot)."""
+    api_scale = get_size_to_api_scale(capture_width, capture_height)
+    if api_scale < 1:
+        nw = max(1, int(capture_width * api_scale))
+        nh = max(1, int(capture_height * api_scale))
+        return nw, nh
+    return capture_width, capture_height
+
+
+def _mapping_from_fresh_capture() -> tuple[int, int, int, int, int, int]:
+    lw, lh = pyautogui.size()
+    raw = _grab_screen_pil()
+    iw, ih = raw.width, raw.height
+    aw, ah = _api_output_dimensions(iw, ih)
+    return lw, lh, aw, ah, iw, ih
+
+
+def _active_screen_mapping() -> tuple[int, int, int, int, int, int]:
+    global _screen_mapping
+    if _screen_mapping is None:
+        _screen_mapping = _mapping_from_fresh_capture()
+    return _screen_mapping
+
+
+def _darwin_quartz_desktop_union() -> tuple[float, float, float, float]:
+    """
+    Union of all active displays in Quartz global space (same units as CGEventGetLocation / CGDisplayBounds).
+    Returns min_x, min_y_bottom, total_w, total_h where y increases upward (Core Graphics).
+    """
+    import Quartz
+
+    err, displays, count = Quartz.CGGetActiveDisplayList(32, None, None)
+    if err != 0 or count == 0:
+        displays = (Quartz.CGMainDisplayID(),)
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    for d in displays:
+        b = Quartz.CGDisplayBounds(d)
+        x0, y0 = float(b.origin.x), float(b.origin.y)
+        x1 = x0 + float(b.size.width)
+        y1 = y0 + float(b.size.height)
+        min_x = min(min_x, x0)
+        min_y = min(min_y, y0)
+        max_x = max(max_x, x1)
+        max_y = max(max_y, y1)
+    total_w = max_x - min_x
+    total_h = max_y - min_y
+    return min_x, min_y, total_w, total_h
+
+
+def _darwin_pointer_bitmap_xy_quartz(iw: int, ih: int) -> tuple[int, int]:
+    """
+    Map cursor to top-left PNG/screencapture pixel coordinates. Screencapture is often 2× the
+    width/height of CGDisplayBounds; proportional scaling fixes LLM vs cursor mismatch.
+    """
+    import Quartz
+
+    min_x, min_y, total_w, total_h = _darwin_quartz_desktop_union()
+    if total_w <= 0 or total_h <= 0:
+        raise ValueError("invalid Quartz desktop union")
+    ev = Quartz.CGEventCreate(None)
+    loc = Quartz.CGEventGetLocation(ev)
+    mx, my = float(loc.x), float(loc.y)
+    rel_x = max(0.0, min(mx - min_x, total_w))
+    # Quartz y increases upward; PNG row 0 is the top of the virtual desktop.
+    max_y = min_y + total_h
+    dist_from_top = max(0.0, min(max_y - my, total_h))
+    bx = int(round(rel_x * iw / total_w))
+    by = int(round(dist_from_top * ih / total_h))
+    bx = max(0, min(bx, iw - 1))
+    by = max(0, min(by, ih - 1))
+    return bx, by
+
+
+def _cocoa_desktop_point_rect() -> tuple[float, float, float, float]:
+    """Union of all NSScreen frames (AppKit points, bottom-left) — fallback only."""
+    import AppKit
+
+    screens = AppKit.NSScreen.screens()
+    min_left = min(float(s.frame().origin.x) for s in screens)
+    min_bottom = min(float(s.frame().origin.y) for s in screens)
+    max_right = max(float(s.frame().origin.x + s.frame().size.width) for s in screens)
+    max_top = max(float(s.frame().origin.y + s.frame().size.height) for s in screens)
+    return min_left, min_bottom, max_right - min_left, max_top - min_bottom
+
+
+def _darwin_pointer_bitmap_xy_union_desktop_points(iw: int, ih: int) -> tuple[int, int]:
+    """Fallback: NSScreen frame union in points (no Quartz / wrong when bitmap is 2×)."""
+    import AppKit
+
+    mouse = AppKit.NSEvent.mouseLocation()
+    mx, my = float(mouse.x), float(mouse.y)
+    min_left, min_bottom, dw, dh = _cocoa_desktop_point_rect()
+    if dw <= 0 or dh <= 0:
+        raise ValueError("invalid Cocoa desktop rect")
+    rel_x = mx - min_left
+    rel_y_bl = my - min_bottom
+    rel_y_top = dh - rel_y_bl
+    rel_x = max(0.0, min(rel_x, dw))
+    rel_y_top = max(0.0, min(rel_y_top, dh))
+    bx = int(round(rel_x * iw / dw))
+    by = int(round(rel_y_top * ih / dh))
+    bx = max(0, min(bx, iw - 1))
+    by = max(0, min(by, ih - 1))
+    return bx, by
+
+
+def _pointer_to_bitmap_xy(iw: int, ih: int) -> tuple[int, int]:
+    """
+    Cursor position in the same pixel grid as _grab_screen_pil() / PNG sent to the model (before API resize).
+    """
+    if sys.platform == "darwin" and not _pytest_active:
+        try:
+            return _darwin_pointer_bitmap_xy_quartz(iw, ih)
+        except Exception:
+            try:
+                return _darwin_pointer_bitmap_xy_union_desktop_points(iw, ih)
+            except Exception:
+                pass
+    px, py = pyautogui.position()
+    lw, lh = pyautogui.size()
+    return (
+        int(round(px * iw / lw)),
+        int(round(py * ih / lh)),
+    )
+
+
+def _bitmap_xy_to_api(ax: int, ay: int, iw: int, ih: int, aw: int, ah: int) -> tuple[int, int]:
+    return int(round(ax * aw / iw)), int(round(ay * ah / ih))
+
+
 def get_api_to_logical_scale() -> float:
-    w, h = pyautogui.size()
-    return 1.0 / get_size_to_api_scale(w, h)
+    """Legacy single-axis scale: move_space_width / api_width (prefer _active_screen_mapping for clicks)."""
+    lw, _lh, aw, _ah, _iw, _ih = _active_screen_mapping()
+    return lw / aw if aw else 1.0
 
 
 def _grab_screen_pil() -> Image.Image:
@@ -104,12 +247,11 @@ def _pixels_to_scroll_clicks(amount: int) -> int:
 def _scale_coordinate(
     coordinate: list[float] | tuple[float, float],
 ) -> tuple[int, int]:
-    scale = get_api_to_logical_scale()
-    x = int(round(coordinate[0] * scale))
-    y = int(round(coordinate[1] * scale))
-    w, h = pyautogui.size()
-    if x < 0 or x >= w or y < 0 or y >= h:
-        raise ValueError(f"Coordinates ({x}, {y}) are outside display bounds of {w}x{h}")
+    lw, lh, aw, ah, _iw, _ih = _active_screen_mapping()
+    x = int(round(coordinate[0] * lw / aw))
+    y = int(round(coordinate[1] * lh / ah))
+    if x < 0 or x >= lw or y < 0 or y >= lh:
+        raise ValueError(f"Coordinates ({x}, {y}) are outside display bounds of {lw}x{lh}")
     return x, y
 
 
@@ -149,12 +291,10 @@ def handle_computer_sync(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"kind": "json", "data": {"ok": True}}
 
     if action == "get_cursor_position":
-        px, py = pyautogui.position()
-        scale = get_api_to_logical_scale()
-        return {
-            "kind": "json",
-            "data": {"x": int(round(px / scale)), "y": int(round(py / scale))},
-        }
+        lw, lh, aw, ah, iw, ih = _active_screen_mapping()
+        bx, by = _pointer_to_bitmap_xy(iw, ih)
+        api_x, api_y = _bitmap_xy_to_api(bx, by, iw, ih, aw, ah)
+        return {"kind": "json", "data": {"x": api_x, "y": api_y}}
 
     if action == "mouse_move":
         if scaled is None:
@@ -232,18 +372,21 @@ def handle_computer_sync(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"kind": "json", "data": {"ok": True}}
 
     if action == "get_screenshot":
+        global _screen_mapping
         time.sleep(1.0)
-        cpx, cpy = pyautogui.position()
-        image = _grab_screen_pil()
+        lw, lh = pyautogui.size()
+        raw = _grab_screen_pil()
+        iw, ih = raw.width, raw.height
+        image = raw
         api_scale = get_size_to_api_scale(image.width, image.height)
         if api_scale < 1:
             nw = max(1, int(image.width * api_scale))
             nh = max(1, int(image.height * api_scale))
             image = image.resize((nw, nh), Image.Resampling.LANCZOS)
 
-        scale = get_api_to_logical_scale()
-        cursor_in_image_x = int(cpx / scale)
-        cursor_in_image_y = int(cpy / scale)
+        _screen_mapping = (lw, lh, image.width, image.height, iw, ih)
+        bx, by = _pointer_to_bitmap_xy(iw, ih)
+        cursor_in_image_x, cursor_in_image_y = _bitmap_xy_to_api(bx, by, iw, ih, image.width, image.height)
         _draw_crosshair(image, cursor_in_image_x, cursor_in_image_y)
 
         buf = io.BytesIO()
@@ -270,9 +413,10 @@ def handle_save_screenshot_sync(arguments: dict[str, Any]) -> dict[str, Any]:
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     time.sleep(1.0)
-    cpx, cpy = pyautogui.position()
     image = _grab_screen_pil()
-    _draw_crosshair(image, int(cpx), int(cpy))
+    iw, ih = image.width, image.height
+    bx, by = _pointer_to_bitmap_xy(iw, ih)
+    _draw_crosshair(image, bx, by)
 
     ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     filename = f"screenshot-{ts}.png"

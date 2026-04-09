@@ -35,6 +35,21 @@ def reset_xdotool_cache() -> None:
     runtime._xdotool_available = None
 
 
+@pytest.fixture(autouse=True)
+def reset_screen_mapping() -> None:
+    runtime._screen_mapping = None
+    yield
+    runtime._screen_mapping = None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _runtime_pytest_pointer_fallback() -> None:
+    """Use PyAutoGUI ratio mapping in tests; production macOS uses AppKit for cursor→bitmap."""
+    runtime._pytest_active = True
+    yield
+    runtime._pytest_active = False
+
+
 def pytest_configure(config: pytest.Config) -> None:
     global _active_pytest_config
     _active_pytest_config = config

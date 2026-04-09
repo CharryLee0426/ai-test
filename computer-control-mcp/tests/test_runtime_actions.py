@@ -16,7 +16,13 @@ def mock_gui() -> MagicMock:
     with patch("computer_control_mcp.runtime.pyautogui") as m:
         m.size.return_value = (1920, 1080)
         m.position.return_value = (100, 200)
-        yield m
+
+        def _grab() -> Image.Image:
+            w, h = m.size.return_value
+            return Image.new("RGBA", (w, h), (0, 0, 0, 255))
+
+        with patch("computer_control_mcp.runtime._grab_screen_pil", side_effect=_grab):
+            yield m
 
 
 def test_key(mock_gui: MagicMock) -> None:
@@ -173,6 +179,18 @@ def test_get_screenshot_downscales_large_image(mock_gui: MagicMock) -> None:
     assert r["kind"] == "screenshot"
     assert r["meta"]["image_width"] < 4000
     assert r["meta"]["image_height"] < 3000
+
+
+def test_mouse_move_uses_screenshot_api_dimensions_not_logical(mock_gui: MagicMock) -> None:
+    """LLM coords match the image from get_screenshot, even when capture size != pyautogui.size()."""
+    shot = Image.new("RGB", (400, 300), color=(0, 0, 0))
+    with patch("computer_control_mcp.runtime.time.sleep"):
+        with patch("computer_control_mcp.runtime._grab_screen_pil", return_value=shot.convert("RGBA")):
+            with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(1920, 1080)):
+                handle_computer_sync({"action": "get_screenshot"})
+    r = handle_computer_sync({"action": "mouse_move", "coordinate": [200.0, 150.0]})
+    assert r == {"kind": "json", "data": {"ok": True}}
+    mock_gui.moveTo.assert_called_with(960, 540, duration=0)
 
 
 def test_unknown_action(mock_gui: MagicMock) -> None:
