@@ -77,7 +77,7 @@ Claude Code ships with 88 feature flags gated behind `bun:bundle` compile-time s
 
 ## Model Providers
 
-free-code supports **five API providers** out of the box. Set the corresponding environment variable to switch providers -- no code changes needed.
+free-code supports **six API provider modes** out of the box. Set the corresponding environment variable to switch providers -- no code changes needed.
 
 ### Anthropic (Direct API) -- Default
 
@@ -103,6 +103,28 @@ Use OpenAI's Codex models for code generation. Requires a Codex subscription.
 export CLAUDE_CODE_USE_OPENAI=1
 free-code
 ```
+
+### OpenAI-compatible Responses API
+
+The CLI still speaks to the Anthropic Messages API internally, but you can route traffic to any gateway that implements the **OpenAI Responses API** (streaming SSE, same shape as ChatGPT Codex’s responses backend). That includes providers such as **BytePlus / Volcengine ModelArk (ARK)** and other OpenAI-compatible proxies: the build translates each `/v1/messages` request into a Responses `POST`, forwards your **model id unchanged** (set `ANTHROPIC_MODEL` or `--model` to the provider’s id, e.g. an ARK endpoint id), and maps the stream back so the rest of the agent (tools, attachments, etc.) keeps working. For strict gateways, known-extra fields (`store`, `parallel_tool_calls`, `strict: null` on tools) are stripped automatically when the base URL looks like ARK / Volcengine / BytePlus hosts; use `OPENAI_COMPAT_MINIMAL_REQUEST=1` to force that behavior, or `OPENAI_COMPAT_FULL_REQUEST=1` to disable it.
+
+```bash
+export CLAUDE_CODE_USE_OPENAI_COMPAT=1
+export OPENAI_COMPAT_BASE_URL="https://example.com/api/v3"   # or OPENAI_BASE_URL
+export ARK_API_KEY="..."                                      # or OPENAI_COMPAT_API_KEY / OPENAI_API_KEY
+export ANTHROPIC_MODEL="your-provider-model-id"
+free-code
+```
+
+| Variable | Purpose |
+|---|---|
+| `CLAUDE_CODE_USE_OPENAI_COMPAT` | Enable OpenAI-compatible Responses adapter |
+| `OPENAI_COMPAT_BASE_URL` / `OPENAI_BASE_URL` | API base URL (default POST path: `/responses`) |
+| `OPENAI_COMPAT_API_KEY` / `ARK_API_KEY` / `OPENAI_API_KEY` | Bearer token for `Authorization` |
+| `OPENAI_COMPAT_RESPONSES_PATH` | Override path if not `/responses` |
+| `OPENAI_COMPAT_OPENAI_BETA` | Set `OpenAI-Beta` header when required |
+| `OPENAI_COMPAT_DEBUG` | Log compat URL and HTTP errors to stderr |
+| `OPENAI_COMPAT_AUTHORIZATION` | Full `Authorization` header if not `Bearer <key>` |
 
 ### AWS Bedrock
 
@@ -153,6 +175,7 @@ Supports custom deployment IDs as model names.
 |---|---|---|
 | Anthropic (default) | -- | `ANTHROPIC_API_KEY` or OAuth |
 | OpenAI Codex | `CLAUDE_CODE_USE_OPENAI=1` | OAuth via OpenAI |
+| OpenAI-compatible Responses | `CLAUDE_CODE_USE_OPENAI_COMPAT=1` | API key (`ARK_API_KEY`, etc.) |
 | AWS Bedrock | `CLAUDE_CODE_USE_BEDROCK=1` | AWS credentials |
 | Google Vertex AI | `CLAUDE_CODE_USE_VERTEX=1` | `gcloud` ADC |
 | Anthropic Foundry | `CLAUDE_CODE_USE_FOUNDRY=1` | `ANTHROPIC_FOUNDRY_API_KEY` |
