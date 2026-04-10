@@ -28,6 +28,9 @@ KEYBOARD_TYPE_INTERVAL = 0.01
 
 MAX_LONG_EDGE = 1568
 MAX_PIXELS = 1.15 * 1024 * 1024
+# Claude Code / client vision budgeting: keep (w×h)/750 ≤ 1600 so the host does not re-downsample
+# (e.g. 1362×884 exceeds 1_200_000 and still triggers downsampling).
+MAX_VISION_PATCH_PIXELS = 1600 * 750
 
 _xdotool_available: bool | None = None
 
@@ -64,7 +67,10 @@ def get_size_to_api_scale(width: float, height: float) -> float:
     total_pixels = width * height
     long_edge_scale = MAX_LONG_EDGE / long_edge if long_edge > MAX_LONG_EDGE else 1.0
     pixel_scale = (MAX_PIXELS / total_pixels) ** 0.5 if total_pixels > MAX_PIXELS else 1.0
-    return min(long_edge_scale, pixel_scale)
+    vision_scale = (
+        (MAX_VISION_PATCH_PIXELS / total_pixels) ** 0.5 if total_pixels > MAX_VISION_PATCH_PIXELS else 1.0
+    )
+    return min(long_edge_scale, pixel_scale, vision_scale)
 
 
 def _api_output_dimensions(capture_width: int, capture_height: int) -> tuple[int, int]:

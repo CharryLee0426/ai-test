@@ -9,6 +9,7 @@ from PIL import Image
 
 import computer_control_mcp.runtime as runtime_mod
 from computer_control_mcp.runtime import (
+    _api_output_dimensions,
     _draw_crosshair,
     _grab_screen_pil,
     _pixels_to_scroll_clicks,
@@ -26,6 +27,15 @@ def test_get_size_to_api_scale_long_edge_over_limit() -> None:
     s = get_size_to_api_scale(2000, 1000)
     assert 0 < s < 1.0
     assert int(2000 * s) <= 1568
+
+
+def test_get_size_to_api_scale_under_claude_code_patch_budget() -> None:
+    """1362×884 is slightly over 1600×750; scale down so long edge is just under 1362."""
+    s = get_size_to_api_scale(1362, 884)
+    assert 0 < s < 1.0
+    aw, ah = _api_output_dimensions(1362, 884)
+    assert max(aw, ah) < 1362
+    assert aw * ah <= 1_200_000
 
 
 def test_get_api_to_logical_scale() -> None:
