@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 ACTION_DESCRIPTION = """The action to perform. The available actions are:
 * key: Press a key or key-combination on the keyboard.
 * type: Type a string of text on the keyboard.
-* get_cursor_position: Get the current (x, y) pixel coordinate of the cursor on the screen.
-* mouse_move: Move the cursor to a specified (x, y) pixel coordinate on the screen.
+* get_cursor_position: Get cursor (x, y) in the same coordinate system as the last get_screenshot image (see image_width/image_height in that result), not raw monitor pixels.
+* mouse_move: Move the cursor; (x, y) must use the last screenshot's image_width x image_height space (top-left origin).
 * left_click: Click the left mouse button. If coordinate is provided, moves to that position first.
 * left_click_drag: Click and drag the cursor to a specified (x, y) pixel coordinate on the screen.
 * right_click: Click the right mouse button. If coordinate is provided, moves to that position first.
@@ -35,6 +35,12 @@ ACTION_DESCRIPTION = """The action to perform. The available actions are:
 * get_screenshot: Take a screenshot of the screen."""
 
 TOOL_DESCRIPTION = """Use a mouse and keyboard to interact with a computer, and take screenshots.
+
+Coordinate system (critical for vision models, e.g. Claude):
+* After get_screenshot, every coordinate you pass (mouse_move, click, scroll, drag, get_cursor_position output) is in the PNG pixel grid from that screenshot: x in [0, image_width), y in [0, image_height), origin top-left. Use the numeric image_width and image_height from the JSON printed with the screenshot — not your physical display resolution.
+* The host downsamples screenshots to stay within Anthropic vision limits (~1.15MP, long edge ≤1568px) so the API should not resize the image again; still, always anchor clicks to the reported image_width/image_height.
+* The MCP server maps these coordinates to real desktop pixels; you must not "scale up" to monitor size yourself.
+
 * This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.
 * Always prefer using keyboard shortcuts rather than clicking, where possible.
 * If you see boxes with two letters in them, typing these letters will click that element. Use this instead of other shortcuts or clicking, where possible.
@@ -71,7 +77,11 @@ COMPUTER_INPUT_SCHEMA: dict[str, Any] = {
             "items": {"type": "number"},
             "minItems": 2,
             "maxItems": 2,
-            "description": "(x, y): The x (pixels from the left edge) and y (pixels from the top edge) coordinates",
+            "description": (
+                "[x, y] in the pixel space of the most recent get_screenshot PNG: "
+                "0≤x<image_width, 0≤y<image_height from that tool's JSON (top-left origin). "
+                "Not monitor native resolution."
+            ),
         },
         "text": {"type": "string", "description": "Text to type or key command to execute"},
     },

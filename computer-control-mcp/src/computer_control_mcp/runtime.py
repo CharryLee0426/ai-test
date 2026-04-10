@@ -392,7 +392,18 @@ def handle_computer_sync(arguments: dict[str, Any]) -> dict[str, Any]:
         buf = io.BytesIO()
         image.save(buf, format="PNG", optimize=True, compress_level=9)
         png_bytes = buf.getvalue()
-        meta = {"image_width": image.width, "image_height": image.height}
+        meta = {
+            "image_width": image.width,
+            "image_height": image.height,
+            "mouse_coordinate_space": (
+                "Use these image_width/image_height for all mouse coordinates until the next get_screenshot; "
+                "origin top-left; same grid as the attached PNG. Server maps to desktop pixels."
+            ),
+            "vision_limits_note": (
+                "Screenshot is pre-sized to reduce Anthropic API-side resizing "
+                "(see https://docs.anthropic.com/en/docs/build-with-claude/vision#evaluate-image-size )."
+            ),
+        }
         return {"kind": "screenshot", "meta": meta, "png_bytes": png_bytes}
 
     raise ValueError(f"Unknown action: {action}")

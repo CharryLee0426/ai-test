@@ -166,7 +166,9 @@ def test_get_screenshot(mock_gui: MagicMock) -> None:
             with patch("computer_control_mcp.runtime.pyautogui.size", return_value=(1920, 1080)):
                 r = handle_computer_sync({"action": "get_screenshot"})
     assert r["kind"] == "screenshot"
-    assert r["meta"] == {"image_width": 400, "image_height": 300}
+    assert r["meta"]["image_width"] == 400
+    assert r["meta"]["image_height"] == 300
+    assert "mouse_coordinate_space" in r["meta"]
     assert r["png_bytes"].startswith(b"\x89PNG\r\n\x1a\n")
 
 
