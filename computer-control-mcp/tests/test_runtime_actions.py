@@ -168,6 +168,12 @@ def test_get_screenshot(mock_gui: MagicMock) -> None:
     assert r["kind"] == "screenshot"
     assert r["meta"]["image_width"] == 400
     assert r["meta"]["image_height"] == 300
+    d = r["meta"]["debug"]
+    assert d["capture_width"] == 400 and d["capture_height"] == 300
+    assert d["output_width"] == 400 and d["output_height"] == 300
+    assert d["api_scale"] == 1.0
+    assert d["logical_desktop_width"] == 1920 and d["logical_desktop_height"] == 1080
+    assert d["png_bytes"] == len(r["png_bytes"])
     assert "mouse_coordinate_space" in r["meta"]
     assert r["png_bytes"].startswith(b"\x89PNG\r\n\x1a\n")
 
@@ -181,6 +187,11 @@ def test_get_screenshot_downscales_large_image(mock_gui: MagicMock) -> None:
     assert r["kind"] == "screenshot"
     assert r["meta"]["image_width"] < 4000
     assert r["meta"]["image_height"] < 3000
+    d = r["meta"]["debug"]
+    assert d["capture_width"] == 4000 and d["capture_height"] == 3000
+    assert d["output_width"] == r["meta"]["image_width"]
+    assert d["output_height"] == r["meta"]["image_height"]
+    assert d["api_scale"] < 1.0
 
 
 def test_mouse_move_uses_screenshot_api_dimensions_not_logical(mock_gui: MagicMock) -> None:

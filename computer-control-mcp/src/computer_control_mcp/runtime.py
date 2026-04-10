@@ -401,6 +401,16 @@ def handle_computer_sync(arguments: dict[str, Any]) -> dict[str, Any]:
         meta = {
             "image_width": image.width,
             "image_height": image.height,
+            "debug": {
+                "capture_width": iw,
+                "capture_height": ih,
+                "output_width": image.width,
+                "output_height": image.height,
+                "api_scale": float(api_scale),
+                "logical_desktop_width": lw,
+                "logical_desktop_height": lh,
+                "png_bytes": len(png_bytes),
+            },
             "mouse_coordinate_space": (
                 "Use these image_width/image_height for all mouse coordinates until the next get_screenshot; "
                 "origin top-left; same grid as the attached PNG. Server maps to desktop pixels."

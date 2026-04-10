@@ -199,6 +199,9 @@ Pytest is configured in `pyproject.toml` for **verbose output** (`-vv`), **long 
 
 Feature parity targets the upstream **`computer`** tool (actions and schema). Minor differences remain (e.g. scroll units are mapped to PyAutoGUI’s wheel steps; Unicode typing may differ when `xdotool` is not used). See the upstream project for original behavior and safety discussion: [github.com/domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp).
 
+## Known Issue
+This MCP doesn't work well on claude code. It is because claude code's auto downsample for images which larger than 1,600 tokens. Please refer to this section [https://docs.anthropic.com/en/docs/build-with-claude/vision#evaluate-image-size](https://docs.anthropic.com/en/docs/build-with-claude/vision#evaluate-image-size). Even though the mcp can make sure uploaded screenshot size is under the automatically downsample limit, claude code still can't handle them correctly. But it works well on other agents such as cursor or codex.
+
 ## License
 
 Add a `LICENSE` file if you publish the project; the upstream inspiration uses MIT.
