@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compare Screenshot Results"
+  short_description: "Compare result and baseline screenshots"
+  default_prompt: "Use $compare-result-screenshot-with-baseline to compare a report screenshot against its baseline and produce a final review image."
