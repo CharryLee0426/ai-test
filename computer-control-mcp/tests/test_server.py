@@ -20,7 +20,7 @@ async def test_list_tools_registers_computer() -> None:
     server = build_server()
     r = await server.request_handlers[ListToolsRequest](None)
     tools = r.root.tools
-    assert len(tools) == 2
+    assert len(tools) == 3
     t0 = tools[0]
     assert t0.name == "computer"
     assert t0.annotations is not None
@@ -34,6 +34,14 @@ async def test_list_tools_registers_computer() -> None:
     assert t1.annotations.title == "Save Screenshot"
     assert t1.inputSchema.get("additionalProperties") is False
     assert "path" in t1.inputSchema["properties"]
+    t2 = tools[2]
+    assert t2.name == "save_screen_recording"
+    assert t2.annotations is not None
+    assert t2.annotations.title == "Save Screen Recording"
+    assert t2.inputSchema.get("additionalProperties") is False
+    assert "path" in t2.inputSchema["properties"]
+    assert "duration_seconds" in t2.inputSchema["properties"]
+    assert "fps" in t2.inputSchema["properties"]
 
 
 @pytest.mark.asyncio
@@ -98,6 +106,42 @@ async def test_call_tool_save_screenshot_result() -> None:
         "ok": True,
         "path": "/tmp/screenshot-2026-04-07-13-06-05.png",
         "filename": "screenshot-2026-04-07-13-06-05.png",
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_tool_save_screen_recording_result() -> None:
+    server = build_server()
+    await server.request_handlers[ListToolsRequest](None)
+    with patch(
+        "computer_control_mcp.server.handle_save_screen_recording_sync",
+        return_value={
+            "kind": "json",
+            "data": {
+                "ok": True,
+                "path": "/tmp/screen-recording-2026-04-28-12-00-00.mp4",
+                "filename": "screen-recording-2026-04-28-12-00-00.mp4",
+                "duration_seconds": 3.0,
+                "fps": 2.0,
+                "frames": 6,
+                "frame_duration_ms": 500,
+            },
+        },
+    ):
+        req = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(name="save_screen_recording", arguments={}),
+        )
+        r = await server.request_handlers[CallToolRequest](req)
+    assert not r.root.isError
+    assert r.root.structuredContent == {
+        "ok": True,
+        "path": "/tmp/screen-recording-2026-04-28-12-00-00.mp4",
+        "filename": "screen-recording-2026-04-28-12-00-00.mp4",
+        "duration_seconds": 3.0,
+        "fps": 2.0,
+        "frames": 6,
+        "frame_duration_ms": 500,
     }
 
 

@@ -1,6 +1,6 @@
 # computer-control-mcp
 
-A **Model Context Protocol (MCP)** server that exposes a single **`computer`** tool so LLM clients can drive the desktop: keyboard, mouse, scrolling, and screenshots. The tool’s contract (actions, parameters, coordinate scaling, screenshot metadata) is aligned with **[domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp)**; this implementation uses **Python**, **PyAutoGUI**, and **Pillow** instead of Node and nut.js.
+A **Model Context Protocol (MCP)** server that exposes a **`computer`** tool plus companion save helpers so LLM clients can drive the desktop: keyboard, mouse, scrolling, screenshots, and short saved screen recordings. The tool’s contract (actions, parameters, coordinate scaling, screenshot metadata) is aligned with **[domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp)**; this implementation uses **Python**, **PyAutoGUI**, and **Pillow** instead of Node and nut.js.
 
 > **Warning:** This grants full GUI control to whatever model or client calls the tool. Use only on machines you trust, preferably under supervision or in an isolated account, and be aware of prompt-injection risks.
 
@@ -11,6 +11,7 @@ A **Model Context Protocol (MCP)** server that exposes a single **`computer`** t
 | Protocol | [MCP](https://modelcontextprotocol.io/) over **stdio** (`mcp` Python SDK) |
 | Automation | **PyAutoGUI** (mouse, keyboard, basic scrolling) |
 | Images | **Pillow** (screenshots, resize, PNG export, on-image crosshair) |
+| Video encoding | **ffmpeg** (MP4 assembly for saved screen recordings) |
 | Linux typing | Optional **`xdotool type`** when available (layout-friendly, same idea as upstream) |
 | macOS screenshot fallback | **`screencapture`** if `pyautogui.screenshot()` fails |
 | Packaging | **setuptools** + `pyproject.toml` (Python ≥ 3.11) |
@@ -23,7 +24,7 @@ A **Model Context Protocol (MCP)** server that exposes a single **`computer`** t
 │  MCP client     │ ◄──────────────────────────► │  computer_control_mcp        │
 │  (Cursor, etc.) │                            │  ┌────────────────────────┐  │
 └─────────────────┘                            │  │ server.py              │  │
-                                               │  │  • list_tools → computer│  │
+                                               │  │  • list_tools → tools   │  │
                                                │  │  • call_tool → dispatch │  │
                                                │  └──────────┬─────────────┘  │
                                                │             │                 │
@@ -43,12 +44,21 @@ A **Model Context Protocol (MCP)** server that exposes a single **`computer`** t
                                                OS display / input APIs
 ```
 
-- **`server.py`** — Registers the MCP server, defines the `computer` tool (JSON Schema, descriptions, annotations), validates inputs, maps results to `CallToolResult` (JSON text + optional `structuredContent`, or text + PNG image).
-- **`runtime.py`** — Implements all `action` branches (`key`, `type`, mouse operations, `scroll`, `get_screenshot`, `get_cursor_position`), coordinate scaling for vision APIs, screenshot downsampling, and red crosshair overlay.
+- **`server.py`** — Registers the MCP server, defines the `computer`, `save_screenshot`, and `save_screen_recording` tools (JSON Schema, descriptions, annotations), validates inputs, and maps results to `CallToolResult`.
+- **`runtime.py`** — Implements all `action` branches (`key`, `type`, mouse operations, `scroll`, `get_screenshot`, `get_cursor_position`), coordinate scaling for vision APIs, screenshot downsampling, red crosshair overlay, PNG saving, and MP4 screen-recording capture via `ffmpeg`.
 - **`keymap.py`** — Parses `+`-separated key names (same vocabulary as upstream) into PyAutoGUI key names; maps platform meta/super keys sensibly (e.g. Command on macOS).
 - **`__main__.py`** — Starts the **stdio** transport so clients can spawn the process and speak MCP over stdin/stdout.
 
 There is **no HTTP transport** in this port (the upstream project can optionally use HTTP); everything runs as a single stdio subprocess.
+
+## Tools
+
+- **`computer`**: interactive desktop control plus inline screenshots.
+- **`save_screenshot`**: saves a full-resolution PNG under an optional directory.
+- **`save_screen_recording`**: saves a short full-resolution MP4 recording. Requires `ffmpeg` on `PATH`. Optional inputs:
+  - `path`: output directory.
+  - `duration_seconds`: approximate recording length, default `3`, max `30`.
+  - `fps`: capture rate, default `2`, max `10`.
 
 ## Install
 

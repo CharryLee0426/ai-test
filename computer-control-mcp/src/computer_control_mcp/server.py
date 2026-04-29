@@ -1,4 +1,4 @@
-"""MCP stdio server: registers `computer` and `save_screenshot` tools."""
+"""MCP stdio server: registers `computer`, `save_screenshot`, and `save_screen_recording` tools."""
 
 from __future__ import annotations
 
@@ -17,7 +17,11 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
 from computer_control_mcp.keymap import InvalidKeyError
-from computer_control_mcp.runtime import handle_computer_sync, handle_save_screenshot_sync
+from computer_control_mcp.runtime import (
+    handle_computer_sync,
+    handle_save_screen_recording_sync,
+    handle_save_screenshot_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +111,33 @@ SAVE_SCREENSHOT_INPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+SAVE_SCREEN_RECORDING_DESCRIPTION = """Save a short full-resolution screen recording as an MP4 file.
+The file name is always screen-recording-YYYY-MM-DD-HH-MM-SS.mp4 (local time)."""
+
+SAVE_SCREEN_RECORDING_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {
+            "type": "string",
+            "description": (
+                "Directory where the MP4 will be written. "
+                "Requires ffmpeg on PATH. "
+                "If omitted, the file is saved under src/computer_control_mcp/screen_recordings "
+                "(package screen_recordings folder)."
+            ),
+        },
+        "duration_seconds": {
+            "type": "number",
+            "description": "Approximate recording length in seconds. Defaults to 3. Maximum 30.",
+        },
+        "fps": {
+            "type": "number",
+            "description": "Capture rate in frames per second. Defaults to 2. Maximum 10.",
+        },
+    },
+    "additionalProperties": False,
+}
+
 
 def _json_result(data: dict[str, Any]) -> types.CallToolResult:
     return types.CallToolResult(
@@ -133,6 +164,12 @@ def build_server() -> Server:
                 inputSchema=SAVE_SCREENSHOT_INPUT_SCHEMA,
                 annotations=types.ToolAnnotations(title="Save Screenshot", readOnlyHint=False),
             ),
+            types.Tool(
+                name="save_screen_recording",
+                description=SAVE_SCREEN_RECORDING_DESCRIPTION,
+                inputSchema=SAVE_SCREEN_RECORDING_INPUT_SCHEMA,
+                annotations=types.ToolAnnotations(title="Save Screen Recording", readOnlyHint=False),
+            ),
         ]
 
     @server.call_tool()
@@ -150,6 +187,19 @@ def build_server() -> Server:
             if raw["kind"] == "json":
                 return _json_result(raw["data"])
             raise RuntimeError(f"Unexpected save_screenshot result: {raw!r}")
+
+        if name == "save_screen_recording":
+            try:
+                raw = await asyncio.to_thread(handle_save_screen_recording_sync, args)
+            except Exception as e:
+                logger.exception("save_screen_recording tool failed")
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=str(e))],
+                    isError=True,
+                )
+            if raw["kind"] == "json":
+                return _json_result(raw["data"])
+            raise RuntimeError(f"Unexpected save_screen_recording result: {raw!r}")
 
         if name != "computer":
             return types.CallToolResult(

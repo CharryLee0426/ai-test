@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw
 from computer_control_mcp.keymap import InvalidKeyError, to_pyautogui_keys
 
 _DEFAULT_SCREENSHOT_DIR = Path(__file__).resolve().parent / "screenshots"
+_DEFAULT_SCREEN_RECORDING_DIR = Path(__file__).resolve().parent / "screen_recordings"
 
 # Match computer-use-mcp nut-js delays (mouse ~100ms); PyAutoGUI uses one global pause.
 pyautogui.PAUSE = 0.1
@@ -50,6 +51,10 @@ def _has_xdotool() -> bool:
     if _xdotool_available is None:
         _xdotool_available = shutil.which("xdotool") is not None
     return _xdotool_available
+
+
+def _has_ffmpeg() -> bool:
+    return shutil.which("ffmpeg") is not None
 
 
 def _xdotool_type(text: str) -> None:
@@ -245,6 +250,34 @@ def _draw_crosshair(img: Image.Image, cx: int, cy: int, size: int = 20) -> None:
             draw.line([(cx + o, y0), (cx + o, y1)], fill=red, width=1)
 
 
+def _resolve_output_dir(raw_path: Any, default_dir: Path) -> Path:
+    if raw_path is not None and not isinstance(raw_path, str):
+        raise ValueError("path must be a string when provided")
+    dest_dir = Path(raw_path).expanduser().resolve() if raw_path else default_dir
+    if dest_dir.exists() and not dest_dir.is_dir():
+        raise ValueError(f"path must be a directory: {dest_dir}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    return dest_dir
+
+
+def _parse_positive_number(
+    arguments: dict[str, Any],
+    key: str,
+    *,
+    default: float,
+    max_value: float | None = None,
+) -> float:
+    raw = arguments.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"{key} must be a number when provided")
+    value = float(raw)
+    if value <= 0:
+        raise ValueError(f"{key} must be greater than 0")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{key} must be <= {max_value}")
+    return value
+
+
 def _pixels_to_scroll_clicks(amount: int) -> int:
     """Map API pixel-like amounts to PyAutoGUI scroll units (OS-dependent)."""
     return max(1, min(500, int(round(amount / 10))))
@@ -431,13 +464,7 @@ def handle_save_screenshot_sync(arguments: dict[str, Any]) -> dict[str, Any]:
 
     Returns {"kind": "json", "data": {"ok": True, "path": str, "filename": str}}.
     """
-    raw_path = arguments.get("path")
-    if raw_path is not None and not isinstance(raw_path, str):
-        raise ValueError("path must be a string when provided")
-    dest_dir = Path(raw_path).expanduser().resolve() if raw_path else _DEFAULT_SCREENSHOT_DIR
-    if dest_dir.exists() and not dest_dir.is_dir():
-        raise ValueError(f"path must be a directory: {dest_dir}")
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_dir = _resolve_output_dir(arguments.get("path"), _DEFAULT_SCREENSHOT_DIR)
 
     time.sleep(1.0)
     image = _grab_screen_pil()
@@ -451,3 +478,79 @@ def handle_save_screenshot_sync(arguments: dict[str, Any]) -> dict[str, Any]:
     image.save(out_path, format="PNG", optimize=True, compress_level=9)
 
     return {"kind": "json", "data": {"ok": True, "path": str(out_path), "filename": filename}}
+
+
+def handle_save_screen_recording_sync(arguments: dict[str, Any]) -> dict[str, Any]:
+    """
+    Capture a short full-resolution screen recording and write MP4 to disk.
+
+    Returns {"kind": "json", "data": {"ok": True, "path": str, "filename": str, ...}}.
+    """
+    dest_dir = _resolve_output_dir(arguments.get("path"), _DEFAULT_SCREEN_RECORDING_DIR)
+    duration_seconds = _parse_positive_number(
+        arguments,
+        "duration_seconds",
+        default=3.0,
+        max_value=30.0,
+    )
+    fps = _parse_positive_number(arguments, "fps", default=2.0, max_value=10.0)
+
+    frame_interval = 1.0 / fps
+    frame_count = max(1, int(round(duration_seconds * fps)))
+    frame_duration_ms = max(20, int(round(frame_interval * 1000)))
+
+    if not _has_ffmpeg():
+        raise RuntimeError("ffmpeg is required to save screen recordings as MP4 but was not found on PATH")
+
+    ts = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    filename = f"screen-recording-{ts}.mp4"
+    out_path = dest_dir / filename
+    capture_started_at = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="computer-control-mcp-recording-") as temp_dir:
+        temp_path = Path(temp_dir)
+        for frame_index in range(frame_count):
+            image = _grab_screen_pil()
+            iw, ih = image.width, image.height
+            bx, by = _pointer_to_bitmap_xy(iw, ih)
+            _draw_crosshair(image, bx, by)
+            frame_path = temp_path / f"frame-{frame_index:06d}.png"
+            image.save(frame_path, format="PNG", optimize=True, compress_level=1)
+
+            target_elapsed = (frame_index + 1) * frame_interval
+            remaining = target_elapsed - (time.monotonic() - capture_started_at)
+            if frame_index < frame_count - 1 and remaining > 0:
+                time.sleep(remaining)
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-framerate",
+                f"{fps:g}",
+                "-i",
+                str(temp_path / "frame-%06d.png"),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(out_path),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+    return {
+        "kind": "json",
+        "data": {
+            "ok": True,
+            "path": str(out_path),
+            "filename": filename,
+            "duration_seconds": duration_seconds,
+            "fps": fps,
+            "frames": frame_count,
+            "frame_duration_ms": frame_duration_ms,
+        },
+    }
